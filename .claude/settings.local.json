@@ -1,7 +1,22 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python *)"
+      "Bash(python *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(python --version)",
+      "PowerShell(pip install *)",
+      "PowerShell(python -c \"import backend.main; print\\('Main module imported successfully'\\)\")",
+      "PowerShell(echo $pwd)",
+      "PowerShell(Start-Process -FilePath python -ArgumentList \"-m\", \"uvicorn\", \"main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\", \"--reload\" -WindowStyle Hidden)",
+      "PowerShell(Invoke-WebRequest -Uri http://localhost:8000/health -UseBasicParsing)",
+      "PowerShell(netstat *)",
+      "PowerShell(Start-Process -FilePath python -ArgumentList \"-m\", \"uvicorn\", \"main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\", \"--reload\" -RedirectStandardOutput \"server.log\" -RedirectStandardError \"server.error.log\" -WindowStyle Hidden)",
+      "PowerShell(Start-Process -FilePath python -ArgumentList \"-m\", \"uvicorn\", \"backend.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\", \"--reload\" -RedirectStandardOutput \"server.log\" -RedirectStandardError \"server.error.log\" -WindowStyle Hidden)",
+      "PowerShell(python -c \"from backend.middleware.interceptor import Interceptor; print\\('Import successful'\\)\")",
+      "PowerShell(python -c \"from backend.middleware.interceptor import Interceptor; import inspect; print\\(inspect.signature\\(Interceptor.validate_and_process_tool_call\\)\\)\")",
+      "PowerShell(taskkill *)",
+      "PowerShell(Start-Process -FilePath python -ArgumentList \"-m\", \"uvicorn\", \"backend.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\", \"--reload\" -WindowStyle Hidden)",
+      "PowerShell(Invoke-WebRequest -Uri http://localhost:8000/api/v1/analytics/metrics -UseBasicParsing)"
     ]
   }
 }

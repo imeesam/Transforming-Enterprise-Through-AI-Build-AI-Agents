@@ -142,7 +142,8 @@ class Interceptor:
         tool_name: str,
         tool_params: Dict,
         user_id: Optional[str] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        request_id: Optional[str] = None
     ) -> Dict:
         """
         Validate and process a tool call through the security proxy.
@@ -154,6 +155,7 @@ class Interceptor:
             tool_params: Parameters for the tool call
             user_id: Optional user identifier
             session_id: Optional session identifier
+            request_id: Optional request identifier for tracing
 
         Returns:
             Dictionary containing the result or error information
@@ -221,7 +223,8 @@ class Interceptor:
             }
 
         # Log the tool call attempt
-        request_id = str(uuid.uuid4())
+        if request_id is None:
+            request_id = str(uuid.uuid4())
         self.audit_logger.log_audit_record(
             request_id=request_id,
             execution_id=str(uuid.uuid4()),

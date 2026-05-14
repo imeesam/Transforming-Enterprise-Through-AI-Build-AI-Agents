@@ -8,6 +8,7 @@ import yaml
 import os
 from typing import Dict, List, Optional, Any
 from datetime import datetime
+from collections import defaultdict
 import logging
 
 logger = logging.getLogger(__name__)

@@ -1,0 +1,11 @@
+policy_id: pol_safe_workspace
+policy_version: v1.0.0
+created_at: '2026-05-14T12:19:00.381452Z'
+severity: CRITICAL
+owner: security_team
+action: DENY
+condition:
+  type: parameter_threshold
+  rules:
+  - parameter: distance_from_base
+    max: 800.0
