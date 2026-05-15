@@ -8,6 +8,8 @@ import uuid
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 import logging
+import math
+
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
@@ -76,6 +78,12 @@ class Interceptor:
         self.state_manager = StateManager(self.audit_logger)
         self.kinematics_solver = KinematicsSolver()
 
+        # In-memory trajectory staging store.
+        # Maps trajectory_id -> { execution_id, trajectory, target, created_at }
+        # Used to validate confirm_execution requests (zero-trust id binding).
+        self._trajectory_store: Dict[str, Dict] = {}
+
+
         logger.info("Interceptor initialized with security policies")
 
     def _check_rate_limit(self, client_id: str = "default") -> Tuple[bool, Optional[str]]:
@@ -137,6 +145,36 @@ class Interceptor:
     def _update_preview_timestamp(self, preview_id: str):
         """Update the timestamp for a preview."""
         self.preview_timestamps[preview_id] = time.time()
+
+    def _clean_trajectory_store(self, max_age_seconds: Optional[float] = None):
+        """Remove old entries from the trajectory store to prevent memory leaks.
+
+        Args:
+            max_age_seconds: Maximum age in seconds for entries to keep.
+                            If None, uses PREVIEW_TIMEOUT_SECONDS.
+        """
+        if max_age_seconds is None:
+            max_age_seconds = self.PREVIEW_TIMEOUT_SECONDS
+
+        now = time.time()
+        to_delete = []
+        for traj_id, traj_info in self._trajectory_store.items():
+            created_at_str = traj_info.get("created_at")
+            if created_at_str:
+                try:
+                    # Parse the ISO format string
+                    created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                    # Convert to timestamp
+                    created_at_time = created_at.timestamp()
+                    if now - created_at_time > max_age_seconds:
+                        to_delete.append(traj_id)
+                except Exception:
+                    # If parsing fails, delete to be safe
+                    to_delete.append(traj_id)
+
+        for traj_id in to_delete:
+            del self._trajectory_store[traj_id]
+            logger.debug(f"Cleaned expired trajectory store entry: {traj_id}")
 
     def validate_and_process_tool_call(
         self,
@@ -403,53 +441,165 @@ class Interceptor:
             y = float(tool_params.get("y", 0))
             z = float(tool_params.get("z", 0))
 
-            # Validate workspace bounds
+            # FSM: PLANNING stage (deterministic kinematics/trajectory generation)
+            self.state_manager.transition_to(
+                RobotState.PLANNING,
+                trigger="trajectory_planning",
+                metadata={"request_id": request_id, "target": {"x": x, "y": y, "z": z}}
+            )
+
+            # Validate workspace bounds (still part of planning/precheck)
             is_valid, error_msg = self.kinematics_solver.validate_workspace_bounds(x, y, z)
             if not is_valid:
-                # Update state to BLOCKED
-                self.state_manager.transition_to(
+                # Policy/FSM: allow transition into BLOCKED during planning.
+                transitioned = self.state_manager.transition_to(
                     RobotState.BLOCKED,
                     trigger="workspace_violation",
-                    metadata={"request_id": request_id, "error": error_msg}
+                    metadata={
+                        "request_id": request_id,
+                        "violated_rule": "pol_safe_workspace",
+                        "policy_snapshot_version": "v1.0.0",
+                        "error": error_msg,
+                    },
                 )
+                if not transitioned:
+                    # Fail closed if FSM rejects transition
+                    return {
+                        "success": False,
+                        "error": "FSM rejected workspace_violation transition",
+                        "error_type": "FSM_TRANSITION_ERROR",
+                    }
                 return {
                     "success": False,
                     "error": error_msg,
-                    "error_type": "WORKSPACE_VIOLATION"
+                    "error_type": "WORKSPACE_VIOLATION",
                 }
+
 
             # Generate trajectory
             trajectory = self.kinematics_solver.generate_safe_trajectory(x, y, z, num_points=10)
+
+            # FSM: VALIDATING stage (policy checking)
+            self.state_manager.transition_to(
+                RobotState.VALIDATING,
+                trigger="proxy_validating",
+                metadata={"request_id": request_id, "trajectory_id": "pending", "target": {"x": x, "y": y, "z": z}}
+            )
+
 
             # Generate IDs
             trajectory_id = str(uuid.uuid4())
             execution_id = str(uuid.uuid4())
 
-            # Update state to PREVIEW
+
+            # Update state to PREVIEW (only after validation passes)
             self.state_manager.transition_to(
                 RobotState.PREVIEW,
-                trigger="trajectory_generated",
+                trigger="proxy_allow",
                 metadata={
                     "request_id": request_id,
                     "trajectory_id": trajectory_id,
                     "execution_id": execution_id,
-                    "target": {"x": x, "y": y, "z": z}
+                    "target": {"x": x, "y": y, "z": z},
+                    "policy_snapshot_version": None,
                 }
             )
+
 
             # Store preview for timeout tracking
             self._update_preview_timestamp(trajectory_id)
 
             # Convert trajectory to serializable format
+            # Trajectory points are returned to the frontend as joint angles in DEGREES
+            # to match frontend expectations (j1/j2/j3 in degrees).
             trajectory_data = [
                 {
-                    "theta1": joint.theta1,
-                    "theta2": joint.theta2,
-                    "theta3": joint.theta3,
-                    "time_point": i / len(trajectory)  # Normalized time
+                    "j1": joint.theta1 * 180.0 / math.pi,
+                    "j2": joint.theta2 * 180.0 / math.pi,
+                    "j3": joint.theta3 * 180.0 / math.pi,
+                    "time_point": i / len(trajectory),  # Normalized time
                 }
                 for i, joint in enumerate(trajectory)
             ]
+
+
+            # Policy enforcement (fail closed)
+            #
+            # Velocity metric approximation (for MVP):
+            # We assume the trajectory is traversed over a fixed duration (1 second).
+            # The total joint delta (sum of absolute joint angle changes in radians)
+            # divided by the number of steps gives the average joint delta per step.
+            # For a trajectory of length 1, there are no steps, so the velocity is zero.
+            # Assuming 1 second total time, this is approximately the average joint speed in rad/s.
+            # To convert to an approximate linear speed at the end effector in mm/s,
+            # we multiply by a characteristic length factor (here 1000 mm/rad, which
+            # assumes a 1m effective lever arm). This is a placeholder; a proper
+            # implementation would use the Jacobian and actual timing.
+            total_joint_delta = 0.0
+            for i in range(1, len(trajectory)):
+                prev = trajectory[i - 1]
+                curr = trajectory[i]
+                total_joint_delta += (
+                    abs(curr.theta1 - prev.theta1)
+                    + abs(curr.theta2 - prev.theta2)
+                    + abs(curr.theta3 - prev.theta3)
+                )
+            velocity_metric = (total_joint_delta / max(1, len(trajectory) - 1)) * 1000.0
+
+            # PolicyEngine expects `distance_from_base` for the workspace policy.
+            # Project uses meters in the kinematics solver; YAML policies comment values in mm.
+            # Industry-standard approach: keep internal units in meters and convert at the policy boundary.
+            distance_from_base_m = math.sqrt(x * x + y * y + z * z)
+            distance_from_base_mm = distance_from_base_m * 1000.0
+
+            policy_input = {
+                "target": {"x": x, "y": y, "z": z},
+                "velocity": float(velocity_metric),
+                "distance_from_base": float(distance_from_base_mm),
+                "trajectory": trajectory_data,
+            }
+
+
+
+            allowed, violated_rule, policy_version = self.policy_engine.evaluate_trajectory(
+                trajectory_data=policy_input
+            )
+
+            if not allowed:
+                self.state_manager.transition_to(
+                    RobotState.BLOCKED,
+                    trigger="policy_denied",
+                    metadata={
+                        "request_id": request_id,
+                        "trajectory_id": trajectory_id,
+                        "execution_id": execution_id,
+                        "violated_rule": violated_rule,
+                        "policy_snapshot_version": policy_version,
+                    },
+                )
+
+                # Remove preview timestamp since it won't be confirmable
+                if trajectory_id in self.preview_timestamps:
+                    del self.preview_timestamps[trajectory_id]
+                return {
+                    "success": False,
+                    "error": f"Policy denied: {violated_rule}",
+                    "error_type": "POLICY_DENIED",
+                    "violated_rule": violated_rule,
+                    "policy_snapshot_version": policy_version,
+                }
+
+            # Clean old trajectory store entries to prevent memory leaks
+            self._clean_trajectory_store()
+
+            # Store staged trajectory for confirm verification
+            self._trajectory_store[trajectory_id] = {
+                "execution_id": execution_id,
+                "trajectory": trajectory_data,
+                "target": {"x": x, "y": y, "z": z},
+                "created_at": datetime.utcnow().isoformat(),
+                "policy_snapshot_version": policy_version,
+            }
 
             return {
                 "success": True,
@@ -457,8 +607,10 @@ class Interceptor:
                 "execution_id": execution_id,
                 "trajectory": trajectory_data,
                 "target": {"x": x, "y": y, "z": z},
-                "message": "Trajectory generated successfully. Awaiting user confirmation."
+                "message": "Trajectory generated successfully. Awaiting user confirmation.",
+                "policy_snapshot_version": policy_version,
             }
+
 
         except ValueError as e:
             # Update state to BLOCKED
@@ -529,6 +681,24 @@ class Interceptor:
                     "error_type": "INVALID_PARAMETERS"
                 }
 
+            # Zero-trust binding: trajectory_id must exist and execution_id must match what was staged.
+            staged = self._trajectory_store.get(trajectory_id)
+            if not staged:
+                return {
+                    "success": False,
+                    "error": "Unknown or expired trajectory_id",
+                    "error_type": "TRAJECTORY_NOT_FOUND",
+                }
+
+            expected_execution_id = staged.get("execution_id")
+            if expected_execution_id and execution_id != expected_execution_id:
+                return {
+                    "success": False,
+                    "error": "execution_id does not match staged trajectory",
+                    "error_type": "EXECUTION_ID_MISMATCH",
+                }
+
+
             # Check if preview is still valid (not timed out)
             is_valid, error_msg = self._check_preview_timeout(trajectory_id)
             if not is_valid:
@@ -538,6 +708,9 @@ class Interceptor:
                     trigger="preview_timeout",
                     metadata={"request_id": request_id, "trajectory_id": trajectory_id}
                 )
+                # Clean up trajectory store entry for timed-out preview
+                if trajectory_id in self._trajectory_store:
+                    del self._trajectory_store[trajectory_id]
                 return {
                     "success": False,
                     "error": error_msg,
@@ -563,21 +736,37 @@ class Interceptor:
                     "request_id": request_id,
                     "trajectory_id": trajectory_id,
                     "execution_id": execution_id,
-                    "confirmed_at": datetime.utcnow().isoformat()
-                }
+                    "confirmed_at": datetime.utcnow().isoformat(),
+                },
+            )
+
+            # Execute immediately for deterministic MVP.
+            exec_result = self._execute_trajectory(
+                tool_params={"trajectory_id": trajectory_id, "execution_id": execution_id},
+                request_id=request_id,
             )
 
             # Clear preview tracking
             if trajectory_id in self.preview_timestamps:
                 del self.preview_timestamps[trajectory_id]
 
+            # Clear staged trajectory after execution
+            if trajectory_id in self._trajectory_store:
+                del self._trajectory_store[trajectory_id]
+
             return {
-                "success": True,
-                "message": "Execution confirmed. Robot is now executing the trajectory.",
+                "success": bool(exec_result.get("success")),
+                "message": exec_result.get(
+                    "message",
+                    "Execution confirmed and executed." if exec_result.get("success") else "Execution failed.",
+                ),
                 "trajectory_id": trajectory_id,
                 "execution_id": execution_id,
-                "state": "EXECUTING"
+                "state": exec_result.get("state", "IDLE"),
+                "execution_result": exec_result,
             }
+
+
 
         except Exception as e:
             logger.error(f"Error in confirm_execution: {e}")
@@ -715,6 +904,9 @@ class Interceptor:
                     trigger="preview_timeout",
                     metadata={"request_id": request_id, "trajectory_id": trajectory_id}
                 )
+                # Clean up trajectory store entry for timed-out preview
+                if trajectory_id in self._trajectory_store:
+                    del self._trajectory_store[trajectory_id]
                 return {
                     "success": False,
                     "error": error_msg,

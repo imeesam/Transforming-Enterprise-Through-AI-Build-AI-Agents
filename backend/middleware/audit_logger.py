@@ -5,6 +5,7 @@ Initializes and manages SQLite database for traceable audit logging.
 
 import sqlite3
 import uuid
+import os
 from datetime import datetime
 from typing import Optional, Dict, Any
 import json
@@ -25,13 +26,15 @@ class AuditLogger:
         Initialize the audit logger and database.
 
         Args:
-            db_path: Path to SQLite database file. If None, uses default location.
+            db_path: Path to SQLite database file. If None, uses default location
+                    or the value of the AUDIT_DB_PATH environment variable.
         """
         if db_path is None:
+            db_path = os.getenv("AUDIT_DB_PATH")
+        if db_path is None:
             # Default to data/audit.sqlite3 as per architecture
-            self.db_path = Path(__file__).parent.parent.parent / "data" / "audit.sqlite3"
-        else:
-            self.db_path = Path(db_path)
+            db_path = Path(__file__).parent.parent.parent / "data" / "audit.sqlite3"
+        self.db_path = Path(db_path)
 
         # Ensure data directory exists
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

@@ -13,6 +13,7 @@ Implements the API endpoints from Section 9 of the architecture.
 
 import uuid
 import logging
+import contextvars
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,12 +28,33 @@ from backend.middleware.policy_engine import PolicyEngine
 from backend.agent.intent_parser import GeminiIntentParser, ParsedIntent
 from backend.kinematics.solver import KinematicsSolver, JointAngles, LinkLengths
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Configure logging with trace ID support
+request_id_var = contextvars.ContextVar('request_id', default='')
+
+class TraceIdFilter(logging.Filter):
+    def filter(self, record):
+        record.trace_id = request_id_var.get('')
+        return True
+
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Create formatter
+formatter = logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - [trace_id=%(trace_id)s] - %(message)s'
+)
+
+# Configure root logger to use our filter and formatter
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+# Remove any existing handlers
+for handler in root_logger.handlers[:]:
+    root_logger.removeHandler(handler)
+# Add console handler with our formatter and filter
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+console_handler.addFilter(TraceIdFilter())
+root_logger.addHandler(console_handler)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -140,10 +162,10 @@ async def preview_trajectory(request: PreviewTrajectoryRequest):
     5. Logs the action for audit trail
     """
     try:
-        logger.info(f"Received preview_trajectory request: {request.dict()}")
-
         # Generate request ID for tracking
         request_id = str(uuid.uuid4())
+        request_id_var.set(request_id)
+        logger.info(f"Received preview_trajectory request: {request.dict()}")
 
         # Use interceptor to process the preview_trajectory tool call
         # This handles validation, rate limiting, security checks, and audit logging
@@ -179,6 +201,9 @@ async def preview_trajectory(request: PreviewTrajectoryRequest):
     except Exception as e:
         logger.error(f"Error in preview_trajectory endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Reset request ID var to avoid leaking to other requests
+        request_id_var.set('')
 
 # Section 9: POST /api/v1/confirm_execution
 @app.post("/api/v1/confirm_execution", response_model=ConfirmExecutionResponse)
@@ -194,10 +219,10 @@ async def confirm_execution(request: ConfirmExecutionRequest):
     5. In a full implementation, would trigger actual trajectory execution
     """
     try:
-        logger.info(f"Received confirm_execution request: {request.dict()}")
-
         # Generate request ID for tracking
         request_id = str(uuid.uuid4())
+        request_id_var.set(request_id)
+        logger.info(f"Received confirm_execution request: {request.dict()}")
 
         # Use interceptor to process the confirm_execution tool call
         tool_params = {
@@ -231,6 +256,9 @@ async def confirm_execution(request: ConfirmExecutionRequest):
     except Exception as e:
         logger.error(f"Error in confirm_execution endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Reset request ID var to avoid leaking to other requests
+        request_id_var.set('')
 
 
 # Section 9: POST /api/v1/cancel_execution
@@ -246,10 +274,10 @@ async def cancel_execution(request: CancelExecutionRequest):
     4. Logs the cancellation for audit trail
     """
     try:
-        logger.info(f"Received cancel_execution request: {request.dict()}")
-
         # Generate request ID for tracking
         request_id = str(uuid.uuid4())
+        request_id_var.set(request_id)
+        logger.info(f"Received cancel_execution request: {request.dict()}")
 
         # Use interceptor to process the cancel_execution tool call
         tool_params = {
@@ -280,6 +308,9 @@ async def cancel_execution(request: CancelExecutionRequest):
     except Exception as e:
         logger.error(f"Error in cancel_execution endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Reset request ID var to avoid leaking to other requests
+        request_id_var.set('')
 
 
 # Section 9: GET /api/v1/analytics/metrics
@@ -294,6 +325,9 @@ async def get_analytics_metrics():
     3. Returns formatted metrics for dashboard display
     """
     try:
+        # Generate request ID for tracking
+        request_id = str(uuid.uuid4())
+        request_id_var.set(request_id)
         logger.info("Fetching analytics metrics")
 
         # Use interceptor to get security metrics
@@ -314,6 +348,9 @@ async def get_analytics_metrics():
     except Exception as e:
         logger.error(f"Error in get_analytics_metrics endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Reset request ID var to avoid leaking to other requests
+        request_id_var.set('')
 
 
 # Additional endpoint: GET /api/v1/audit/log
@@ -328,6 +365,9 @@ async def get_audit_log():
     3. Returns raw audit data for frontend processing
     """
     try:
+        # Generate request ID for tracking
+        request_id = str(uuid.uuid4())
+        request_id_var.set(request_id)
         logger.info("Fetching audit log")
 
         # Get audit records from the audit logger
@@ -398,6 +438,9 @@ async def get_audit_log():
     except Exception as e:
         logger.error(f"Error in get_audit_log endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Reset request ID var to avoid leaking to other requests
+        request_id_var.set('')
 
 
 # Additional endpoints for intent parsing (useful for testing/demo)
@@ -411,6 +454,9 @@ async def parse_intent(request: IntentParseRequest):
     coordinates to the preview_trajectory endpoint.
     """
     try:
+        # Generate request ID for tracking
+        request_id = str(uuid.uuid4())
+        request_id_var.set(request_id)
         logger.info(f"Parsing intent: {request.prompt}")
 
         # Parse the user's natural language prompt
@@ -435,12 +481,18 @@ async def parse_intent(request: IntentParseRequest):
     except Exception as e:
         logger.error(f"Error in parse_intent endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Reset request ID var to avoid leaking to other requests
+        request_id_var.set('')
 
 # Get current robot state (useful for debugging)
 @app.get("/api/v1/robot/state")
 async def get_robot_state():
     """Get current robot state from FSM."""
     try:
+        # Generate request ID for tracking
+        request_id = str(uuid.uuid4())
+        request_id_var.set(request_id)
         current_state = state_manager.current_state
         return {
             "success": True,
@@ -450,13 +502,18 @@ async def get_robot_state():
     except Exception as e:
         logger.error(f"Error getting robot state: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Reset request ID var to avoid leaking to other requests
+        request_id_var.set('')
 
 # Emergency stop endpoint
 @app.post("/api/v1/emergency_stop")
 async def emergency_stop():
     """Trigger emergency stop."""
     try:
+        # Generate request ID for tracking
         request_id = str(uuid.uuid4())
+        request_id_var.set(request_id)
         result = interceptor.validate_and_process_tool_call(
             tool_name="emergency_stop",
             tool_params={},
@@ -477,13 +534,18 @@ async def emergency_stop():
     except Exception as e:
         logger.error(f"Error in emergency_stop endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Reset request ID var to avoid leaking to other requests
+        request_id_var.set('')
 
 # System reset endpoint
 @app.post("/api/v1/reset_system")
 async def reset_system():
     """Reset the system to IDLE state."""
     try:
+        # Generate request ID for tracking
         request_id = str(uuid.uuid4())
+        request_id_var.set(request_id)
         result = interceptor.validate_and_process_tool_call(
             tool_name="reset_system",
             tool_params={},
@@ -504,6 +566,9 @@ async def reset_system():
     except Exception as e:
         logger.error(f"Error in reset_system endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Reset request ID var to avoid leaking to other requests
+        request_id_var.set('')
 
 # Startup event
 @app.on_event("startup")

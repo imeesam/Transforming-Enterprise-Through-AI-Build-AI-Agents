@@ -10,8 +10,23 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 from collections import defaultdict
 import logging
+from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
+
+
+class PolicyBase(BaseModel):
+    """Pydantic model for policy validation."""
+    policy_id: str
+    policy_version: str
+    created_at: str
+    severity: str
+    owner: str
+    action: str
+    condition: Dict[str, Any]
+
+    class Config:
+        extra = 'forbid'  # Reject extra fields
 
 
 class PolicyEngine:
@@ -28,19 +43,21 @@ class PolicyEngine:
 
         Args:
             policies_dir: Directory containing policy YAML files.
-                         If None, uses default location from architecture.
+                         If None, uses default location from architecture
+                         or the value of the POLICIES_DIR environment variable.
         """
         if policies_dir is None:
+            policies_dir = os.getenv("POLICIES_DIR")
+        if policies_dir is None:
             # Default to data/policies as per architecture
-            self.policies_dir = os.path.join(
+            policies_dir = os.path.join(
                 os.path.dirname(__file__),
                 "..",
                 "..",
                 "data",
                 "policies"
             )
-        else:
-            self.policies_dir = policies_dir
+        self.policies_dir = policies_dir
 
         # Ensure policies directory exists
         os.makedirs(self.policies_dir, exist_ok=True)
@@ -65,7 +82,7 @@ class PolicyEngine:
             logger.error(f"Error loading policies: {e}")
 
     def _load_policy_file(self, policy_path: str):
-        """Load a single policy YAML file."""
+        """Load a single policy YAML file with validation."""
         try:
             with open(policy_path, 'r') as f:
                 policy_data = yaml.safe_load(f)
@@ -73,17 +90,21 @@ class PolicyEngine:
             if not policy_data:
                 return
 
-            # Extract policy identifiers
-            policy_id = policy_data.get('policy_id')
-            policy_version = policy_data.get('policy_version')
-
-            if not policy_id or not policy_version:
-                logger.warning(f"Policy missing id or version in {policy_path}")
+            # Validate policy data using Pydantic model
+            try:
+                validated_policy = PolicyBase(**policy_data)
+            except ValidationError as ve:
+                logger.warning(f"Policy validation failed in {policy_path}: {ve}")
                 return
 
-            # Cache the policy
+            # Extract policy identifiers (already validated)
+            policy_id = validated_policy.policy_id
+            policy_version = validated_policy.policy_version
+
+            # Cache the policy (we can store the validated dict or original)
             cache_key = f"{policy_id}:{policy_version}"
-            self._policy_cache[cache_key] = policy_data
+            # Use the validated policy's dict to ensure we store only expected fields
+            self._policy_cache[cache_key] = validated_policy.dict()
 
             # Track versions
             if policy_version not in self._policy_versions[policy_id]:
@@ -91,7 +112,7 @@ class PolicyEngine:
                 # Keep versions sorted
                 self._policy_versions[policy_id].sort()
 
-            logger.debug(f"Loaded policy {policy_id} version {policy_version}")
+            logger.debug(f"Loaded and validated policy {policy_id} version {policy_version}")
 
         except Exception as e:
             logger.error(f"Error loading policy file {policy_path}: {e}")

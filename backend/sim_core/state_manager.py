@@ -137,6 +137,7 @@ class StateManager:
             },
             RobotState.PLANNING: {
                 RobotState.VALIDATING,
+                RobotState.BLOCKED,
                 RobotState.EMERGENCY_STOP,
             },
             RobotState.VALIDATING: {
@@ -188,14 +189,17 @@ class StateManager:
         )
 
         # Log to audit system
+        policy_snapshot_version = transition.metadata.get("policy_snapshot_version", "system")
+        violated_rule = transition.metadata.get("violated_rule")
         self._audit_logger.log_state_change(
             request_id=transition.metadata.get("request_id", "system"),
             execution_id=transition.metadata.get("execution_id", "system"),
             event_type="STATE_CHANGE",
-            decision="ALLOW",  # State changes are typically allowed unless blocked
-            policy_snapshot_version="system",
-            violated_rule=None,
+            decision="DENY" if to_state in {RobotState.BLOCKED, RobotState.EMERGENCY_STOP} else "ALLOW",
+            policy_snapshot_version=policy_snapshot_version,
+            violated_rule=violated_rule,
             execution_lifecycle=to_state.value,
+
             payload_hash="",
             additional_data={
                 "from_state": from_state.value if from_state else None,
