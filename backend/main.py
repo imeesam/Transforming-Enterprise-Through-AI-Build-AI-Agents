@@ -95,6 +95,9 @@ class ConfirmExecutionResponse(BaseModel):
     error: Optional[str] = None
     error_type: Optional[str] = None
 
+class CancelExecutionRequest(BaseModel):
+    trajectory_id: str
+
 class AnalyticsMetricsResponse(BaseModel):
     success: bool
     metrics: Optional[Dict[str, Any]] = None
@@ -229,6 +232,56 @@ async def confirm_execution(request: ConfirmExecutionRequest):
         logger.error(f"Error in confirm_execution endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Section 9: POST /api/v1/cancel_execution
+@app.post("/api/v1/cancel_execution", response_model=dict)
+async def cancel_execution(request: CancelExecutionRequest):
+    """
+    Cancels a pending trajectory execution.
+
+    This endpoint:
+    1. Validates that the trajectory preview exists and hasn't timed out
+    2. Transitions FSM from PREVIEW to ROLLBACK_PENDING state
+    3. Clears the pending trajectory
+    4. Logs the cancellation for audit trail
+    """
+    try:
+        logger.info(f"Received cancel_execution request: {request.dict()}")
+
+        # Generate request ID for tracking
+        request_id = str(uuid.uuid4())
+
+        # Use interceptor to process the cancel_execution tool call
+        tool_params = {
+            "trajectory_id": request.trajectory_id
+        }
+
+        result = interceptor.validate_and_process_tool_call(
+            tool_name="cancel_execution",
+            tool_params=tool_params,
+            request_id=request_id
+        )
+
+        # Convert interceptor result to API response
+        if result.get("success"):
+            return {
+                "success": True,
+                "message": result.get("message", "Execution cancelled"),
+                "trajectory_id": result.get("trajectory_id"),
+                "state": result.get("state", "ROLLBACK_PENDING")
+            }
+        else:
+            return {
+                "success": False,
+                "error": result.get("error", "Unknown error"),
+                "error_type": result.get("error_type", "UNKNOWN_ERROR")
+            }
+
+    except Exception as e:
+        logger.error(f"Error in cancel_execution endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Section 9: GET /api/v1/analytics/metrics
 @app.get("/api/v1/analytics/metrics", response_model=AnalyticsMetricsResponse)
 async def get_analytics_metrics():
@@ -261,6 +314,91 @@ async def get_analytics_metrics():
     except Exception as e:
         logger.error(f"Error in get_analytics_metrics endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Additional endpoint: GET /api/v1/audit/log
+@app.get("/api/v1/audit/log", response_model=list)
+async def get_audit_log():
+    """
+    Returns audit log entries for the dashboard.
+
+    This endpoint:
+    1. Retrieves audit records from the database
+    2. Returns them in chronological order (newest first)
+    3. Returns raw audit data for frontend processing
+    """
+    try:
+        logger.info("Fetching audit log")
+
+        # Get audit records from the audit logger
+        records = audit_logger.get_audit_records(limit=100)
+
+        # Process records to match frontend AuditEntry interface
+        processed_records = []
+        for record in records:
+            # Construct detail field based on event type and available data
+            detail = None
+            if record['event_type'] == "PROMPT":
+                # Extract prompt from additional_data if available
+                additional_data = record.get('additional_data', {})
+                if isinstance(additional_data, dict) and 'prompt' in additional_data:
+                    prompt = additional_data['prompt']
+                    detail = f'Intent received: "{prompt[:60]}"'
+                else:
+                    detail = "Intent received"
+            elif record['event_type'] == "TOOL_CALL":
+                additional_data = record.get('additional_data', {})
+                if isinstance(additional_data, dict):
+                    result = additional_data.get('result', {})
+                    if isinstance(result, dict):
+                        if record['decision'] == "ALLOW":
+                            trajectory_id = result.get('trajectory_id', '')
+                            trajectory = result.get('trajectory', [])
+                            trajectory_length = len(trajectory) if isinstance(trajectory, list) else 0
+                            if trajectory_id:
+                                detail = f'Trajectory {trajectory_id[:8]} staged ({trajectory_length} pts)'
+                            else:
+                                detail = "Tool call allowed"
+                        else:  # DENY
+                            violated_rule = record.get('violated_rule', 'policy')
+                            detail = f'Blocked by {violated_rule}'
+                    else:
+                        detail = f'Tool call {record["decision"]}'
+                else:
+                    detail = f'Tool call {record["decision"]}'
+            elif record['event_type'] == "STATE_CHANGE":
+                execution_lifecycle = record.get('execution_lifecycle', '')
+                detail = f'{execution_lifecycle} · {record["decision"]}' if execution_lifecycle else record['decision']
+            elif record['event_type'] == "CONFIRMATION":
+                trajectory_id = record.get('request_id', '')
+                if trajectory_id:
+                    detail = f'Operator confirmed {trajectory_id[:8]}'
+                else:
+                    detail = 'Execution confirmed'
+            else:
+                detail = f'{record["event_type"]}: {record["decision"]}'
+
+            # Create record matching frontend AuditEntry interface
+            processed_record = {
+                'request_id': record['request_id'],
+                'execution_id': record['execution_id'],
+                'timestamp': record['timestamp'],
+                'event_type': record['event_type'],
+                'decision': record['decision'],
+                'policy_snapshot_version': record.get('policy_snapshot_version'),
+                'violated_rule': record.get('violated_rule'),
+                'execution_lifecycle': record.get('execution_lifecycle'),
+                'payload_hash': record.get('payload_hash'),
+                'detail': detail
+            }
+            processed_records.append(processed_record)
+
+        return processed_records
+
+    except Exception as e:
+        logger.error(f"Error in get_audit_log endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # Additional endpoints for intent parsing (useful for testing/demo)
 @app.post("/api/v1/parse_intent", response_model=IntentParseResponse)

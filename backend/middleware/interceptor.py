@@ -694,6 +694,63 @@ class Interceptor:
                 "error_type": "INTERNAL_ERROR"
             }
 
+    def _cancel_execution(self, tool_params: Dict, request_id: str) -> Dict:
+        """Handle cancellation of execution (restricted tool)."""
+        try:
+            trajectory_id = tool_params.get("trajectory_id")
+
+            if not trajectory_id:
+                return {
+                    "success": False,
+                    "error": "Missing trajectory_id",
+                    "error_type": "INVALID_PARAMETERS"
+                }
+
+            # Check if preview is still valid (not timed out)
+            is_valid, error_msg = self._check_preview_timeout(trajectory_id)
+            if not is_valid:
+                # Update state to IDLE (timeout already handled)
+                self.state_manager.transition_to(
+                    RobotState.IDLE,
+                    trigger="preview_timeout",
+                    metadata={"request_id": request_id, "trajectory_id": trajectory_id}
+                )
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "error_type": "PREVIEW_TIMEOUT"
+                }
+
+            # Update state to ROLLBACK_PENDING
+            self.state_manager.transition_to(
+                RobotState.ROLLBACK_PENDING,
+                trigger="user_cancel",
+                metadata={
+                    "request_id": request_id,
+                    "trajectory_id": trajectory_id,
+                    "cancelled_at": datetime.utcnow().isoformat()
+                }
+            )
+
+            # Clear preview tracking
+            if trajectory_id in self.preview_timestamps:
+                del self.preview_timestamps[trajectory_id]
+
+            return {
+                "success": True,
+                "message": "Execution cancelled successfully.",
+                "trajectory_id": trajectory_id,
+                "state": "ROLLBACK_PENDING"
+            }
+
+        except Exception as e:
+            logger.error(f"Error in cancel_execution: {e}")
+            return {
+                "success": False,
+                "error": "Error cancelling execution",
+                "error_type": "INTERNAL_ERROR"
+            }
+
     def get_security_metrics(self) -> Dict:
         """
         Get security metrics for the analytics dashboard.
