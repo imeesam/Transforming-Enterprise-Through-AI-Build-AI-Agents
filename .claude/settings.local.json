@@ -17,7 +17,9 @@
       "PowerShell(taskkill *)",
       "PowerShell(Start-Process -FilePath python -ArgumentList \"-m\", \"uvicorn\", \"backend.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\", \"--reload\" -WindowStyle Hidden)",
       "PowerShell(Invoke-WebRequest -Uri http://localhost:8000/api/v1/analytics/metrics -UseBasicParsing)",
-      "PowerShell(Invoke-WebRequest -Uri http://localhost:8000/api/v1/preview_trajectory -Method Options -UseBasicParsing)"
+      "PowerShell(Invoke-WebRequest -Uri http://localhost:8000/api/v1/preview_trajectory -Method Options -UseBasicParsing)",
+      "Bash(pip show *)",
+      "Bash(FindStr \"Version\")"
     ]
   }
 }
