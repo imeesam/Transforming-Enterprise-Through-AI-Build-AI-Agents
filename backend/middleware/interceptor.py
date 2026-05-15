@@ -49,7 +49,8 @@ class Interceptor:
 
         self.restricted_tools = {
             "confirm_execution",
-            "execute_trajectory"
+            "execute_trajectory",
+            "cancel_execution"
         }
 
         self.system_tools = {
@@ -349,6 +350,8 @@ class Interceptor:
         elif tool_name == "execute_trajectory":
             # This should only be called after confirmation
             return self._execute_trajectory(tool_params, request_id)
+        elif tool_name == "cancel_execution":
+            return self._cancel_execution(tool_params, request_id)
         else:
             return {
                 "success": False,

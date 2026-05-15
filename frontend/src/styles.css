@@ -1,0 +1,105 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-foreground: var(--surface-foreground);
+  --color-panel: var(--panel);
+  --color-panel-foreground: var(--panel-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-allow: var(--allow);
+  --color-allow-foreground: var(--allow-foreground);
+  --color-deny: var(--deny);
+  --color-deny-foreground: var(--deny-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-grid: var(--grid);
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+}
+
+:root {
+  --radius: 0.375rem;
+  /* Dark industrial HMI palette */
+  --background: oklch(0.18 0.012 240);
+  --foreground: oklch(0.95 0.01 220);
+  --surface: oklch(0.22 0.014 240);
+  --surface-foreground: oklch(0.95 0.01 220);
+  --panel: oklch(0.235 0.016 240);
+  --panel-foreground: oklch(0.95 0.01 220);
+  --card: oklch(0.255 0.018 240);
+  --card-foreground: oklch(0.95 0.01 220);
+  --popover: oklch(0.235 0.016 240);
+  --popover-foreground: oklch(0.95 0.01 220);
+  --primary: oklch(0.78 0.16 195);
+  --primary-foreground: oklch(0.15 0.02 240);
+  --secondary: oklch(0.32 0.02 240);
+  --secondary-foreground: oklch(0.95 0.01 220);
+  --muted: oklch(0.28 0.015 240);
+  --muted-foreground: oklch(0.68 0.02 230);
+  --accent: oklch(0.78 0.16 195);
+  --accent-foreground: oklch(0.15 0.02 240);
+  --allow: oklch(0.78 0.18 145);
+  --allow-foreground: oklch(0.15 0.02 145);
+  --deny: oklch(0.65 0.24 25);
+  --deny-foreground: oklch(0.98 0.01 25);
+  --warning: oklch(0.82 0.17 85);
+  --warning-foreground: oklch(0.15 0.02 85);
+  --destructive: oklch(0.65 0.24 25);
+  --destructive-foreground: oklch(0.98 0.01 25);
+  --border: oklch(0.32 0.018 240);
+  --border-strong: oklch(0.42 0.02 240);
+  --input: oklch(0.28 0.015 240);
+  --ring: oklch(0.78 0.16 195);
+  --grid: oklch(0.3 0.018 240);
+}
+
+@layer base {
+  * { border-color: var(--color-border); }
+  html, body { background-color: var(--color-background); color: var(--color-foreground); }
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+}
+
+@layer utilities {
+  .text-mono { font-family: var(--font-mono); }
+  .bg-scanlines {
+    background-image: repeating-linear-gradient(0deg, transparent 0 2px, color-mix(in oklab, var(--foreground) 3%, transparent) 2px 3px);
+  }
+  .panel-glow {
+    box-shadow: 0 0 0 1px var(--border), 0 8px 30px -10px color-mix(in oklab, var(--primary) 25%, transparent);
+  }
+  @keyframes pulse-ring {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--warning) 60%, transparent); }
+    50% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--warning) 0%, transparent); }
+  }
+  .animate-pulse-ring { animation: pulse-ring 1.6s ease-in-out infinite; }
+  @keyframes dash-flow {
+    to { stroke-dashoffset: -20; }
+  }
+  .animate-dash { animation: dash-flow 1.2s linear infinite; }
+}

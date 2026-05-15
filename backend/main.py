@@ -41,13 +41,13 @@ app = FastAPI(
     version="0.1.0"
 )
 
-# Add CORS middleware for local React frontend
+# Add CORS middleware for Lovable frontend via Ngrok
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],  # React default port
+    allow_origins=["*"],  # Accept all origins for Ngrok compatibility
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["*"],
+    allow_headers=["*", "ngrok-skip-browser-warning"],
 )
 
 # Initialize core components

@@ -21,6 +21,7 @@ class RobotState(Enum):
     EXECUTING = "EXECUTING"
     BLOCKED = "BLOCKED"
     EMERGENCY_STOP = "EMERGENCY_STOP"
+    ROLLBACK_PENDING = "ROLLBACK_PENDING"
 
 
 @dataclass
@@ -145,7 +146,7 @@ class StateManager:
             },
             RobotState.PREVIEW: {
                 RobotState.EXECUTING,
-                RobotState.IDLE,  # For rollback/cancel (simplified)
+                RobotState.ROLLBACK_PENDING,
                 RobotState.EMERGENCY_STOP,
             },
             RobotState.EXECUTING: {
@@ -155,6 +156,9 @@ class StateManager:
             RobotState.BLOCKED: {
                 RobotState.IDLE,
                 RobotState.EMERGENCY_STOP,
+            },
+            RobotState.ROLLBACK_PENDING: {
+                RobotState.IDLE,
             },
             RobotState.EMERGENCY_STOP: {
                 RobotState.IDLE,  # Simplified - in reality goes to SAFE_IDLE first
